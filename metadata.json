@@ -1,0 +1,8 @@
+{
+  "name": "FlipZone Balkan Learning Hub",
+  "description": "Premium video lekcije sa Live Chat podrškom i Admin Dashboardom.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
