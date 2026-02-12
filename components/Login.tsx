@@ -28,13 +28,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoading(true);
     setError('');
 
-    // Osnovna provjera na klijentu
-    if (isRegister && (!formData.email || !formData.password || !formData.nickname)) {
-      setError('Molimo ispunite email, lozinku i nadimak.');
-      setLoading(false);
-      return;
-    }
-
     try {
       const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
       const res = await fetch(endpoint, {
@@ -46,13 +39,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       const data = await res.json();
       
       if (!res.ok) {
-        throw new Error(data.message || 'Nešto je pošlo po zlu. Pokušajte ponovno.');
+        throw new Error(data.message || 'Neuspješna autorizacija. Provjerite podatke.');
       }
       
       onLogin(data.user, data.token);
     } catch (err: any) {
-      console.error("Auth Error:", err);
-      setError(err.message || "Neuspješno povezivanje s poslužiteljem.");
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -112,7 +104,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       
       <div className="mt-14 pt-10 border-t border-white/5 text-center">
         <p className="text-slate-500 text-sm font-medium">
-          {isRegister ? 'Već imaš profil?' : 'Želiš postati član?'}{' '}
+          {isRegister ? 'Već imaš profil?' : 'Želiš postati član?'}{}
           <button type="button" onClick={() => { setIsRegister(!isRegister); setError(''); }} className="text-blue-500 font-black hover:underline ml-1">
             {isRegister ? 'Prijavi se ovdje' : 'Registriraj se sada'}
           </button>
