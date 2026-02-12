@@ -28,6 +28,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoading(true);
     setError('');
 
+    // Osnovna provjera na klijentu
+    if (isRegister && (!formData.email || !formData.password || !formData.nickname)) {
+      setError('Molimo ispunite email, lozinku i nadimak.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
       const res = await fetch(endpoint, {
@@ -36,16 +43,15 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify(formData)
       });
 
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Greška pri obradi zahtjeva');
-        onLogin(data.user, data.token);
-      } else {
-        const text = await res.text();
-        throw new Error(text || 'Greška na serveru');
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || 'Nešto je pošlo po zlu. Pokušajte ponovno.');
       }
+      
+      onLogin(data.user, data.token);
     } catch (err: any) {
+      console.error("Auth Error:", err);
       setError(err.message || "Neuspješno povezivanje s poslužiteljem.");
     } finally {
       setLoading(false);
@@ -74,22 +80,22 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <input required name="lastName" value={formData.lastName} onChange={handleChange} className="login-input" placeholder="Horvat" />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nadimak</label>
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nadimak *</label>
               <input required name="nickname" value={formData.nickname} onChange={handleChange} className="login-input" placeholder="ResellerMaster" />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefon</label>
-              <input required name="phone" value={formData.phone} onChange={handleChange} className="login-input" placeholder="+385 91..." />
+              <input name="phone" value={formData.phone} onChange={handleChange} className="login-input" placeholder="+385 91..." />
             </div>
           </div>
         )}
 
         <div className="space-y-1">
-          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email Adresa</label>
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email Adresa *</label>
           <input required type="email" name="email" value={formData.email} onChange={handleChange} className="login-input" placeholder="tvoj@email.com" />
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Lozinka</label>
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Lozinka *</label>
           <input required type="password" name="password" value={formData.password} onChange={handleChange} className="login-input" placeholder="••••••••" />
         </div>
         

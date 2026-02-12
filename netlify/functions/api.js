@@ -11,7 +11,7 @@ const jsonResponse = (statusCode, body) => ({
   headers: { 
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-action',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
   },
   body: JSON.stringify(body)
@@ -23,14 +23,16 @@ const getSql = () => {
   if (!sql) {
     sql = postgres(DB_URL, { 
       ssl: 'require',
-      connect_timeout: 20,
-      idle_timeout: 30,
-      max: 5 
+      connect_timeout: 10,
+      idle_timeout: 20,
+      max: 10,
+      onnotice: () => {} // Suppress notices
     });
   }
   return sql;
 };
 
+// Automatsko kreiranje svih potrebnih tablica (Automated Table Upload/Setup)
 const initDb = async (db) => {
   try {
     // 1. Users Table
@@ -120,9 +122,9 @@ const initDb = async (db) => {
       images TEXT[]
     )`;
 
-    // Initialize Default Channels if empty
-    const channels = await db`SELECT id FROM channels WHERE type = 'public' LIMIT 1`;
-    if (channels.length === 0) {
+    // Osiguravanje inicijalnih kanala
+    const existingChannels = await db`SELECT id FROM channels WHERE type = 'public' LIMIT 1`;
+    if (existingChannels.length === 0) {
       await db`INSERT INTO channels (id, name, type) VALUES 
         ('opcenito', '👋 Opcenito', 'public'),
         ('trgovina', '💰 Trgovina i Scale', 'public'),
@@ -132,7 +134,7 @@ const initDb = async (db) => {
         ('market', '📉 Tržišni Trendovi', 'public')`;
     }
   } catch (err) {
-    console.error("Critical DB Init Error:", err);
+    console.error("Database initialization failed:", err);
   }
 };
 
@@ -155,53 +157,65 @@ exports.handler = async (event, context) => {
         const token = authHeader.split(' ')[1];
         currentUser = jwt.verify(token, JWT_SECRET);
       } catch (e) {
-        // Token invalid
+        // Ignoriraj nevažeći token
       }
     }
 
-    // --- AUTHENTICATION ---
+    // --- AUTH RUTE ---
 
-    // REGISTER (FIXED)
+    // REGISTRACIJA (POPRAVLJENO)
     if (method === 'POST' && (path === '/auth/register' || path === '/auth/register/')) {
-      const { email, password, firstName, lastName, nickname, phone } = JSON.parse(event.body);
+      const body = JSON.parse(event.body);
+      const { email, password, firstName, lastName, nickname, phone } = body;
       
-      if (!email || !password) {
-        return jsonResponse(400, { message: 'E-mail i lozinka su obavezni.' });
+      if (!email || !password || !nickname) {
+        return jsonResponse(400, { message: 'Email, lozinka i nadimak su obavezni.' });
       }
 
       const normalizedEmail = email.trim().toLowerCase();
+      
+      // 1. Provjera postoji li već korisnik
+      const [existingUser] = await db`SELECT id FROM users WHERE email = ${normalizedEmail}`;
+      if (existingUser) {
+        return jsonResponse(400, { message: 'Korisnik s ovim e-mailom već postoji.' });
+      }
+
       const hashedPassword = await bcrypt.hash(password, 10);
       const isAdmin = normalizedEmail === 'romano.polovic33@gmail.com';
 
       try {
         const [newUser] = await db`
-          INSERT INTO users (email, password, role, first_name, last_name, nickname, phone, is_approved) 
-          VALUES (${normalizedEmail}, ${hashedPassword}, ${isAdmin ? 'admin' : 'user'}, ${firstName}, ${lastName}, ${nickname}, ${phone}, ${isAdmin}) 
+          INSERT INTO users (
+            email, password, role, first_name, last_name, nickname, phone, is_approved
+          ) VALUES (
+            ${normalizedEmail}, ${hashedPassword}, ${isAdmin ? 'admin' : 'user'}, 
+            ${firstName || ''}, ${lastName || ''}, ${nickname}, ${phone || ''}, ${isAdmin}
+          ) 
           RETURNING id, email, role, nickname, is_approved as "isApproved", completed_lessons
         `;
         
         const token = jwt.sign(newUser, JWT_SECRET);
         return jsonResponse(200, { user: newUser, token });
       } catch (e) { 
-        console.error("Register Error:", e);
-        return jsonResponse(400, { message: 'Korisnik s ovim e-mailom već postoji.' }); 
+        console.error("Greška pri unosu u bazu:", e);
+        return jsonResponse(500, { message: 'Neuspješna registracija. Pokušajte ponovno.', details: e.message }); 
       }
     }
 
-    // LOGIN (FIXED)
+    // PRIJAVA (POPRAVLJENO)
     if (method === 'POST' && (path === '/auth/login' || path === '/auth/login/')) {
       const { email, password } = JSON.parse(event.body);
       
       if (!email || !password) {
-        return jsonResponse(400, { message: 'E-mail i lozinka su obavezni.' });
+        return jsonResponse(400, { message: 'Email i lozinka su obavezni.' });
       }
       
       const normalizedEmail = email.trim().toLowerCase();
       const [user] = await db`SELECT * FROM users WHERE email = ${normalizedEmail}`;
 
       if (user) {
-        const isValid = await bcrypt.compare(password, user.password);
-        if (isValid) {
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (isMatch) {
           const { password: _, is_approved, ...userSafe } = user;
           userSafe.isApproved = is_approved;
           userSafe.completed_lessons = user.completed_lessons || [];
@@ -212,40 +226,37 @@ exports.handler = async (event, context) => {
       return jsonResponse(401, { message: 'Pogrešan e-mail ili lozinka.' });
     }
 
-    // ME (VERIFY)
+    // VERIFIKACIJA KORISNIKA
     if (method === 'GET' && (path === '/auth/me' || path === '/auth/me/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste prijavljeni.' });
       const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
       if (!user) return jsonResponse(404, { message: 'Korisnik nije pronađen.' });
       return jsonResponse(200, user);
     }
 
-    // --- GENERAL DATA ---
+    // --- DATA RUTE ---
 
     if (method === 'GET' && (path === '/data' || path === '/data/')) {
       const lessons = await db`SELECT * FROM lessons ORDER BY "order" ASC`;
       const suppliers = await db`SELECT * FROM suppliers ORDER BY id ASC`;
       const announcements = await db`SELECT * FROM announcements ORDER BY date DESC`;
       const useful = await db`SELECT * FROM useful_items ORDER BY id ASC`;
-      const userCount = await db`SELECT COUNT(*) FROM users`;
-      const stats = {
-        users: userCount[0].count,
-        lessons: lessons.length,
-        suppliers: suppliers.length
-      };
+      const [stats] = await db`SELECT (SELECT COUNT(*) FROM users) as users, 
+                                      (SELECT COUNT(*) FROM lessons) as lessons, 
+                                      (SELECT COUNT(*) FROM suppliers) as suppliers`;
       return jsonResponse(200, { lessons, suppliers, announcements, useful, stats });
     }
 
-    // --- USER PROFITS ---
+    // --- PROFIT RUTE ---
 
     if (method === 'GET' && (path === '/user/profits' || path === '/user/profits/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const data = await db`SELECT * FROM profits WHERE user_id = ${currentUser.id} ORDER BY created_at DESC`;
       return jsonResponse(200, data);
     }
 
     if (method === 'POST' && (path === '/user/profits' || path === '/user/profits/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const { itemName, buyPrice, sellPrice, costs } = JSON.parse(event.body);
       const netProfit = sellPrice - buyPrice - costs;
       const [entry] = await db`INSERT INTO profits (user_id, item_name, buy_price, sell_price, costs, net_profit) VALUES (${currentUser.id}, ${itemName}, ${buyPrice}, ${sellPrice}, ${costs}, ${netProfit}) RETURNING *`;
@@ -253,16 +264,16 @@ exports.handler = async (event, context) => {
     }
 
     if (method === 'DELETE' && path.startsWith('/user/profits/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const profitId = path.split('/').pop();
       await db`DELETE FROM profits WHERE id = ${profitId} AND user_id = ${currentUser.id}`;
       return jsonResponse(200, { success: true });
     }
 
-    // --- LESSON PROGRESS ---
+    // --- PROGRESS RUTE ---
 
     if (method === 'POST' && (path === '/user/lessons/complete' || path === '/user/lessons/complete/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const { lessonId } = JSON.parse(event.body);
       const action = event.headers['x-action'];
 
@@ -276,10 +287,10 @@ exports.handler = async (event, context) => {
       return jsonResponse(200, { completed_lessons: user.completed_lessons });
     }
 
-    // --- CHAT SYSTEM ---
+    // --- CHAT RUTE ---
 
     if (method === 'GET' && path.startsWith('/chat/channels')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       let channels;
       if (currentUser.role === 'admin') {
         channels = await db`SELECT c.*, u.nickname FROM channels c LEFT JOIN users u ON c.user_id = u.id ORDER BY c.type ASC, c.created_at DESC`;
@@ -296,7 +307,7 @@ exports.handler = async (event, context) => {
     }
 
     if (method === 'POST' && path.startsWith('/chat/messages/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const channelId = path.split('/').pop();
       const { content } = JSON.parse(event.body);
       await db`INSERT INTO messages (channel_id, user_id, content) VALUES (${channelId}, ${currentUser.id}, ${content})`;
@@ -304,13 +315,13 @@ exports.handler = async (event, context) => {
     }
 
     if (method === 'POST' && (path === '/chat/tickets' || path === '/chat/tickets/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      if (!currentUser) return jsonResponse(401, { message: 'Niste autorizirani.' });
       const ticketId = 'ticket-' + Math.random().toString(36).substring(2, 9);
       const [ticket] = await db`INSERT INTO channels (id, name, type, user_id) VALUES (${ticketId}, ${'Ticket: ' + (currentUser.nickname || currentUser.email.split('@')[0])}, 'ticket', ${currentUser.id}) RETURNING *`;
       return jsonResponse(200, ticket);
     }
 
-    // --- ADMIN ACCESS ---
+    // --- ADMIN RUTE ---
 
     if (currentUser?.role === 'admin') {
       if (method === 'GET' && path === '/admin/users') {
@@ -353,9 +364,9 @@ exports.handler = async (event, context) => {
       }
     }
 
-    return jsonResponse(404, { message: 'Not Found' });
+    return jsonResponse(404, { message: 'Putanja nije pronađena.' });
   } catch (err) {
-    console.error("Critical API Error:", err);
-    return jsonResponse(500, { message: 'Došlo je do pogreške na poslužitelju.', details: err.message });
+    console.error("API GREŠKA:", err);
+    return jsonResponse(500, { message: 'Pogreška na poslužitelju.', details: err.message });
   }
 };
