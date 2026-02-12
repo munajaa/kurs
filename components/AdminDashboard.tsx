@@ -7,7 +7,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate }) => {
-  const [activeTab, setActiveTab] = useState<'lessons' | 'suppliers' | 'users' | 'useful' | 'announcements'>('lessons');
+  const [activeTab, setActiveTab] = useState<'lessons' | 'suppliers' | 'announcements' | 'useful' | 'users'>('lessons');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -24,7 +24,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
         const json = await res.json();
         setData(Array.isArray(json) ? json : []);
       }
-    } catch (e) { console.error("Admin fetch error", e); }
+    } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
 
@@ -33,23 +33,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
   }, [activeTab]);
 
   const handleDelete = async (id: any) => {
-    if (!confirm('Sigurno želiš obrisati ovaj unos?')) return;
+    if (!confirm('Obrisati?')) return;
     try {
       const res = await fetch(`/api/admin/${activeTab}/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        fetchData();
-        onUpdate();
-      }
+      if (res.ok) fetchData();
     } catch (e) { console.error(e); }
   };
 
-  const handleEdit = (item: any) => {
-    setFormData(item);
-    setIsEditing(true);
-    setShowForm(true);
+  const handleToggleApprove = async (userId: number) => {
+    try {
+      const res = await fetch(`/api/admin/users/approve/${userId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) fetchData();
+    } catch (e) { console.error(e); }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,20 +59,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
     try {
       const url = isEditing ? `/api/admin/${activeTab}/${formData.id}` : `/api/admin/${activeTab}`;
       const method = isEditing ? 'PUT' : 'POST';
-      
       const res = await fetch(url, {
         method,
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-      
       if (res.ok) {
         setShowForm(false);
         setFormData({});
-        setIsEditing(false);
         fetchData();
         onUpdate();
       }
@@ -79,135 +74,108 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
     finally { setLoading(false); }
   };
 
-  const toggleApproval = async (id: number) => {
-    try {
-      const res = await fetch(`/api/admin/users/approve/${id}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) fetchData();
-    } catch (e) { console.error(e); }
-  };
-
-  const renderFormFields = () => {
+  const renderForm = () => {
     switch (activeTab) {
       case 'lessons':
         return (
-          <>
-            <input required placeholder="ID lekcije (npr. intro)" className="admin-input" value={formData.id || ''} onChange={e => setFormData({...formData, id: e.target.value})} disabled={isEditing} />
-            <input required placeholder="Naslov Lekcije" className="admin-input" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} />
-            <input type="number" required placeholder="Redoslijed" className="admin-input" value={formData.order || ''} onChange={e => setFormData({...formData, order: parseInt(e.target.value)})} />
-            <input required placeholder="Kategorija" className="admin-input" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})} />
-            <input required placeholder="Trajanje" className="admin-input" value={formData.duration || ''} onChange={e => setFormData({...formData, duration: e.target.value})} />
-            <textarea required placeholder="Opis" className="admin-input" rows={2} value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} />
-            <textarea required placeholder="Sadržaj" className="admin-input" rows={8} value={formData.content || ''} onChange={e => setFormData({...formData, content: e.target.value})} />
-          </>
+          <div className="space-y-4">
+            <input placeholder="ID (npr. modul-1)" className="admin-input" value={formData.id || ''} onChange={e => setFormData({...formData, id: e.target.value})} disabled={isEditing} />
+            <input placeholder="Naslov" className="admin-input" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} />
+            <input type="number" placeholder="Order" className="admin-input" value={formData.order || ''} onChange={e => setFormData({...formData, order: parseInt(e.target.value)})} />
+            <input placeholder="Kategorija" className="admin-input" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})} />
+            <textarea placeholder="Opis" className="admin-input" rows={2} value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} />
+            <textarea placeholder="Sadržaj" className="admin-input" rows={6} value={formData.content || ''} onChange={e => setFormData({...formData, content: e.target.value})} />
+          </div>
         );
       case 'suppliers':
         return (
-          <>
-            <input required placeholder="Naziv dobavljača" className="admin-input" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
-            <input required placeholder="Naziv proizvoda" className="admin-input" value={formData.product_name || ''} onChange={e => setFormData({...formData, product_name: e.target.value})} />
-            <input required placeholder="URL slike" className="admin-input" value={formData.image_url || ''} onChange={e => setFormData({...formData, image_url: e.target.value})} />
-            <input required placeholder="Link za kupnju" className="admin-input" value={formData.buy_link || ''} onChange={e => setFormData({...formData, buy_link: e.target.value})} />
-            <label className="flex items-center gap-2 text-white text-xs px-2"><input type="checkbox" checked={formData.is_whatsapp || false} onChange={e => setFormData({...formData, is_whatsapp: e.target.checked})} /> WhatsApp?</label>
-          </>
+          <div className="space-y-4">
+            <input placeholder="Naziv" className="admin-input" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+            <input placeholder="Proizvod" className="admin-input" value={formData.product_name || ''} onChange={e => setFormData({...formData, product_name: e.target.value})} />
+            <input placeholder="Slika URL" className="admin-input" value={formData.image_url || ''} onChange={e => setFormData({...formData, image_url: e.target.value})} />
+            <input placeholder="Link" className="admin-input" value={formData.buy_link || ''} onChange={e => setFormData({...formData, buy_link: e.target.value})} />
+          </div>
         );
-      default: return <p className="text-white italic">Polja za ovu tablicu bit će dodana uskoro.</p>;
+      case 'announcements':
+        return (
+          <div className="space-y-4">
+            <input placeholder="Naslov" className="admin-input" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} />
+            <input placeholder="Tag (UPDATE, INFO)" className="admin-input" value={formData.tag || ''} onChange={e => setFormData({...formData, tag: e.target.value})} />
+            <textarea placeholder="Poruka" className="admin-input" rows={3} value={formData.message || ''} onChange={e => setFormData({...formData, message: e.target.value})} />
+          </div>
+        );
+      default: return null;
     }
   };
 
   return (
-    <div className="space-y-12 animate-in fade-in">
-      <div className="flex flex-col xl:flex-row items-center justify-between gap-8">
-        <div className="space-y-2">
-           <h2 className="text-5xl font-black text-white tracking-tight">Master <span className="text-blue-500">Control</span></h2>
-           <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.3em]">Administracija baze podataka</p>
+    <div className="space-y-10 animate-in fade-in max-w-6xl mx-auto">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div>
+          <h2 className="text-4xl font-black text-white">Admin <span className="text-blue-500">Panel</span></h2>
+          <p className="text-slate-500 uppercase text-[10px] tracking-widest font-black">Upravljanje HUB sustavom</p>
         </div>
-        
-        <div className="flex flex-wrap items-center justify-center gap-4">
-          <div className="flex bg-white/5 p-1.5 rounded-2xl border border-white/5 backdrop-blur-xl">
-            {['lessons', 'suppliers', 'announcements', 'useful', 'users'].map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTab(t as any)}
-                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === t ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/20' : 'text-slate-500 hover:text-white'}`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-          {activeTab !== 'users' && (
-            <button onClick={() => { setFormData({}); setIsEditing(false); setShowForm(true); }} className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest">+ Novo</button>
-          )}
+        <div className="flex bg-white/5 p-1 rounded-2xl border border-white/5">
+          {['lessons', 'suppliers', 'announcements', 'useful', 'users'].map(t => (
+            <button key={t} onClick={() => setActiveTab(t as any)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === t ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>{t}</button>
+          ))}
         </div>
+        {activeTab !== 'users' && (
+          <button onClick={() => { setFormData({}); setIsEditing(false); setShowForm(true); }} className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest">+ Novo</button>
+        )}
       </div>
 
-      <div className="bg-slate-900/40 rounded-[3rem] border border-white/5 overflow-hidden glass shadow-2xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-white/[0.02] border-b border-white/5">
-              <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                <th className="p-8">Naziv / Identitet</th>
-                <th className="p-8">Status / Detalji</th>
-                <th className="p-8 text-right">Akcija</th>
+      <div className="glass rounded-[2.5rem] border border-white/5 overflow-hidden">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-white/5 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+            <tr>
+              <th className="p-6">Identitet</th>
+              <th className="p-6">Detalji / Status</th>
+              <th className="p-6 text-right">Akcija</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {data.map(item => (
+              <tr key={item.id} className="hover:bg-white/[0.01]">
+                <td className="p-6">
+                  <p className="font-black text-white">{item.nickname || item.title || item.name}</p>
+                  <p className="text-[10px] text-slate-500">{item.email || item.id}</p>
+                </td>
+                <td className="p-6">
+                  {activeTab === 'users' ? (
+                    <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${item.isApproved ? 'bg-emerald-500/10 text-emerald-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
+                      {item.isApproved ? 'ODOBREN' : 'ČEKA'}
+                    </span>
+                  ) : (
+                    <p className="text-xs text-slate-500 truncate max-w-xs">{item.description || item.category || 'Nema opisa'}</p>
+                  )}
+                </td>
+                <td className="p-6 text-right space-x-2">
+                  {activeTab === 'users' && (
+                    <button onClick={() => handleToggleApprove(item.id)} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase ${item.isApproved ? 'bg-slate-800 text-slate-400' : 'bg-blue-600 text-white'}`}>
+                      {item.isApproved ? 'Onemogući' : 'Odobri'}
+                    </button>
+                  )}
+                  {activeTab !== 'users' && (
+                    <button onClick={() => { setFormData(item); setIsEditing(true); setShowForm(true); }} className="p-2 text-blue-400 hover:bg-blue-600/10 rounded-lg">✎</button>
+                  )}
+                  <button onClick={() => handleDelete(item.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">✖</button>
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {data.map((item: any) => (
-                <tr key={item.id} className="hover:bg-white/[0.01]">
-                  <td className="p-8">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-blue-600/10 flex items-center justify-center font-black text-blue-500 text-sm">
-                        {activeTab === 'users' ? (item.nickname?.charAt(0) || 'U') : '★'}
-                      </div>
-                      <div>
-                        <p className="font-black text-white">{item.nickname || item.title || item.product_name || item.name}</p>
-                        <p className="text-[10px] text-slate-500">{item.email || item.id}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-8">
-                    {activeTab === 'users' ? (
-                      <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${item.isApproved ? 'bg-emerald-500/10 text-emerald-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
-                        {item.isApproved ? 'ODOBREN' : 'ČEKA'}
-                      </span>
-                    ) : (
-                      <p className="text-xs text-slate-500 truncate max-w-xs">{item.description || item.category || 'N/A'}</p>
-                    )}
-                  </td>
-                  <td className="p-8 text-right">
-                    <div className="flex items-center justify-end gap-3">
-                      {activeTab === 'users' && (
-                        <button onClick={() => toggleApproval(item.id)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase ${item.isApproved ? 'bg-slate-800 text-slate-400' : 'bg-blue-600 text-white'}`}>
-                          {item.isApproved ? 'OPOZOVI' : 'ODOBRI'}
-                        </button>
-                      )}
-                      {activeTab !== 'users' && (
-                        <button onClick={() => handleEdit(item)} className="p-3 bg-white/5 text-blue-400 rounded-xl">✎</button>
-                      )}
-                      <button onClick={() => handleDelete(item.id)} className="p-3 bg-red-500/10 text-red-500 rounded-xl">✖</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {loading && <div className="p-20 text-center text-slate-500 font-bold animate-pulse">UČITAVANJE BAZE...</div>}
-          {!loading && data.length === 0 && <div className="p-20 text-center text-slate-600 italic">Prazno. Dodajte podatke.</div>}
-        </div>
+            ))}
+          </tbody>
+        </table>
+        {loading && <div className="p-20 text-center text-slate-600 animate-pulse font-black uppercase tracking-widest">SINKRONIZACIJA...</div>}
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-8 backdrop-blur-xl">
-          <div className="w-full max-w-3xl glass p-12 rounded-[3rem] relative space-y-8">
-            <button onClick={() => setShowForm(false)} className="absolute top-8 right-8 text-slate-500 hover:text-white">✖</button>
-            <h3 className="text-3xl font-black text-white uppercase">{isEditing ? 'Uredi' : 'Novo'} {activeTab}</h3>
-            <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-4">
-              {renderFormFields()}
-              <div className="pt-6 flex gap-4">
-                <button type="submit" className="flex-1 py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest shadow-2xl">Spremi</button>
-              </div>
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+          <div className="w-full max-w-2xl glass p-10 rounded-[3rem] space-y-8 relative">
+            <button onClick={() => setShowForm(false)} className="absolute top-8 right-8 text-slate-500">✖</button>
+            <h3 className="text-3xl font-black text-white uppercase">{isEditing ? 'Uredi' : 'Dodaj'} {activeTab}</h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {renderForm()}
+              <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs mt-6">Spremi promjene</button>
             </form>
           </div>
         </div>
@@ -218,8 +186,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
           width: 100%;
           background: rgba(255,255,255,0.03);
           border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 1.5rem;
-          padding: 1.2rem;
+          border-radius: 1rem;
+          padding: 1rem;
           color: white;
           outline: none;
         }

@@ -32,10 +32,9 @@ const getSql = () => {
   return sql;
 };
 
-// Automatska inicijalizacija baze s početnim podacima
+// Funkcija koja osigurava bazu i puni je početnim podacima ako je prazna
 const syncDatabase = async (db) => {
   try {
-    // 1. Tablica Korisnika
     await db`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -50,7 +49,6 @@ const syncDatabase = async (db) => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
-    // 2. Tablice Sadržaja
     await db`CREATE TABLE IF NOT EXISTS lessons (
       id TEXT PRIMARY KEY,
       "order" INTEGER,
@@ -58,7 +56,8 @@ const syncDatabase = async (db) => {
       description TEXT,
       content TEXT,
       duration TEXT,
-      category TEXT
+      category TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
     await db`CREATE TABLE IF NOT EXISTS suppliers (
@@ -68,7 +67,8 @@ const syncDatabase = async (db) => {
       image_url TEXT,
       buy_link TEXT,
       is_whatsapp BOOLEAN DEFAULT FALSE,
-      description TEXT
+      description TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
     await db`CREATE TABLE IF NOT EXISTS announcements (
@@ -77,7 +77,8 @@ const syncDatabase = async (db) => {
       title TEXT,
       message TEXT,
       tag TEXT,
-      image_url TEXT
+      image_url TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
     await db`CREATE TABLE IF NOT EXISTS useful_items (
@@ -86,18 +87,7 @@ const syncDatabase = async (db) => {
       description TEXT,
       category TEXT,
       content TEXT,
-      images TEXT[]
-    )`;
-
-    // 3. Tablice Chata i Profita
-    await db`CREATE TABLE IF NOT EXISTS profits (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      item_name TEXT NOT NULL,
-      buy_price DECIMAL(10,2) NOT NULL,
-      sell_price DECIMAL(10,2) NOT NULL,
-      costs DECIMAL(10,2) DEFAULT 0,
-      net_profit DECIMAL(10,2) NOT NULL,
+      images TEXT[],
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
@@ -117,15 +107,7 @@ const syncDatabase = async (db) => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
-    // Punjenje početnim podacima ako su tablice prazne
-    const lessonsCount = await db`SELECT count(*) FROM lessons`;
-    if (parseInt(lessonsCount[0].count) === 0) {
-      // Ovdje bi išao INSERT za tvoje lekcije iz lessons.ts
-      // Dodajemo barem jednu testnu lekciju
-      await db`INSERT INTO lessons (id, "order", title, description, content, duration, category) VALUES 
-      ('intro', 0, 'Uvod – FlipZone Master Program', 'Dobrodošli u ozbiljan reselling.', 'Sadržaj uvodne lekcije...', '5 min', 'Uvod')`;
-    }
-
+    // Seed početnih kanala
     const channelExists = await db`SELECT id FROM channels WHERE id = 'opcenito'`;
     if (channelExists.length === 0) {
       await db`INSERT INTO channels (id, name, type) VALUES 
@@ -157,19 +139,18 @@ exports.handler = async (event, context) => {
       } catch (e) {}
     }
 
-    // --- AUTENTIFIKACIJA ---
+    // AUTH Rute
     if (method === 'POST' && path.includes('/auth/register')) {
-      const { email, password, firstName, lastName, nickname, phone } = JSON.parse(event.body);
-      const normalizedEmail = email.trim().toLowerCase();
-      const existing = await db`SELECT id FROM users WHERE email = ${normalizedEmail}`;
+      const body = JSON.parse(event.body);
+      const email = body.email.trim().toLowerCase();
+      const existing = await db`SELECT id FROM users WHERE email = ${email}`;
       if (existing.length > 0) return jsonResponse(400, { message: 'Email već postoji.' });
 
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const isAdmin = normalizedEmail === 'romano.polovic33@gmail.com';
-
+      const hashed = await bcrypt.hash(body.password, 10);
+      const isAdmin = email === 'romano.polovic33@gmail.com';
       const [user] = await db`
         INSERT INTO users (email, password, role, first_name, last_name, nickname, phone, is_approved) 
-        VALUES (${normalizedEmail}, ${hashedPassword}, ${isAdmin ? 'admin' : 'user'}, ${firstName || ''}, ${lastName || ''}, ${nickname}, ${phone || ''}, ${isAdmin}) 
+        VALUES (${email}, ${hashed}, ${isAdmin ? 'admin' : 'user'}, ${body.firstName}, ${body.lastName}, ${body.nickname}, ${body.phone}, ${isAdmin}) 
         RETURNING id, email, role, nickname, is_approved as "isApproved", completed_lessons
       `;
       const token = jwt.sign(user, JWT_SECRET);
@@ -178,35 +159,31 @@ exports.handler = async (event, context) => {
 
     if (method === 'POST' && path.includes('/auth/login')) {
       const { email, password } = JSON.parse(event.body);
-      const normalizedEmail = email.trim().toLowerCase();
-      const [user] = await db`SELECT * FROM users WHERE email = ${normalizedEmail}`;
+      const [user] = await db`SELECT * FROM users WHERE email = ${email.trim().toLowerCase()}`;
       if (user && await bcrypt.compare(password, user.password)) {
-        const { password: _, is_approved, ...userSafe } = user;
-        userSafe.isApproved = is_approved;
-        userSafe.completed_lessons = user.completed_lessons || [];
-        const token = jwt.sign(userSafe, JWT_SECRET);
-        return jsonResponse(200, { user: userSafe, token });
+        const { password: _, is_approved, ...safe } = user;
+        safe.isApproved = is_approved;
+        safe.completed_lessons = user.completed_lessons || [];
+        return jsonResponse(200, { user: safe, token: jwt.sign(safe, JWT_SECRET) });
       }
       return jsonResponse(401, { message: 'Pogrešan email ili lozinka.' });
     }
 
-    if (method === 'GET' && path.includes('/auth/me')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
-      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
-      return jsonResponse(200, user);
-    }
-
-    // --- JAVNI PODACI ---
     if (method === 'GET' && path === '/data') {
       const lessons = await db`SELECT * FROM lessons ORDER BY "order" ASC`;
-      const suppliers = await db`SELECT * FROM suppliers ORDER BY id ASC`;
-      const announcements = await db`SELECT * FROM announcements ORDER BY date DESC`;
-      const useful = await db`SELECT * FROM useful_items ORDER BY id ASC`;
+      const suppliers = await db`SELECT * FROM suppliers ORDER BY created_at DESC`;
+      const announcements = await db`SELECT * FROM announcements ORDER BY created_at DESC`;
+      const useful = await db`SELECT * FROM useful_items ORDER BY created_at DESC`;
       return jsonResponse(200, { lessons, suppliers, announcements, useful });
     }
 
-    // --- CHAT I PROFIT (ZAHTIJEVAJU TOKEN) ---
-    if (!currentUser) return jsonResponse(401, { message: 'Pristup odbijen.' });
+    // Zaštićene rute
+    if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+
+    if (method === 'GET' && path.includes('/auth/me')) {
+      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
+      return jsonResponse(200, user);
+    }
 
     // Chat
     if (method === 'GET' && path.startsWith('/chat/channels')) {
@@ -223,21 +200,20 @@ exports.handler = async (event, context) => {
     }
 
     if (method === 'POST' && path.startsWith('/chat/messages/')) {
-      const channelId = path.split('/').pop();
       const { content } = JSON.parse(event.body);
+      const channelId = path.split('/').pop();
       await db`INSERT INTO messages (channel_id, user_id, content) VALUES (${channelId}, ${currentUser.id}, ${content})`;
       return jsonResponse(200, { success: true });
     }
 
     if (method === 'POST' && path.includes('/chat/tickets')) {
-      const ticketId = 'ticket-' + Math.random().toString(36).substring(2, 9);
-      const [ticket] = await db`INSERT INTO channels (id, name, type, user_id) VALUES (${ticketId}, ${'Podrška: ' + (currentUser.nickname || currentUser.email)}, 'ticket', ${currentUser.id}) RETURNING *`;
+      const id = 'ticket-' + Math.random().toString(36).substring(2, 9);
+      const [ticket] = await db`INSERT INTO channels (id, name, type, user_id) VALUES (${id}, ${'Support: ' + currentUser.nickname}, 'ticket', ${currentUser.id}) RETURNING *`;
       return jsonResponse(200, ticket);
     }
 
-    // --- ADMIN RUTE ---
+    // Admin
     if (currentUser.role === 'admin') {
-      // Korisnici
       if (method === 'GET' && path.includes('/admin/users')) {
         const users = await db`SELECT id, email, role, nickname, is_approved as "isApproved", created_at FROM users ORDER BY created_at DESC`;
         return jsonResponse(200, users);
@@ -248,62 +224,33 @@ exports.handler = async (event, context) => {
         return jsonResponse(200, { success: true });
       }
 
-      // CRUD za sadržaj
-      const parts = path.split('/');
-      const tableType = parts[2]; // lessons, suppliers, etc.
       const tableMap = { lessons: 'lessons', suppliers: 'suppliers', announcements: 'announcements', useful: 'useful_items' };
-      const tableName = tableMap[tableType];
-
-      if (tableName) {
-        if (method === 'GET') return jsonResponse(200, await db`SELECT * FROM ${db(tableName)} ORDER BY id ASC`);
+      const table = tableMap[path.split('/')[2]];
+      if (table) {
+        if (method === 'GET') return jsonResponse(200, await db`SELECT * FROM ${db(table)} ORDER BY created_at DESC`);
         if (method === 'POST') {
           const body = JSON.parse(event.body);
           if (!body.id) body.id = Math.random().toString(36).substring(2, 9);
-          await db`INSERT INTO ${db(tableName)} ${db(body)}`;
+          await db`INSERT INTO ${db(table)} ${db(body)}`;
           return jsonResponse(200, { success: true });
         }
         if (method === 'PUT') {
-          const id = parts[3];
+          const id = path.split('/').pop();
           const body = JSON.parse(event.body);
           delete body.id;
-          await db`UPDATE ${db(tableName)} SET ${db(body)} WHERE id = ${id}`;
+          await db`UPDATE ${db(table)} SET ${db(body)} WHERE id = ${id}`;
           return jsonResponse(200, { success: true });
         }
         if (method === 'DELETE') {
-          const id = parts[3];
-          await db`DELETE FROM ${db(tableName)} WHERE id = ${id}`;
+          await db`DELETE FROM ${db(table)} WHERE id = ${path.split('/').pop()}`;
           return jsonResponse(200, { success: true });
         }
       }
-    }
-
-    // Progress
-    if (method === 'POST' && path === '/user/lessons/complete') {
-      const { lessonId } = JSON.parse(event.body);
-      const action = event.headers['x-action'];
-      if (action === 'remove') {
-        await db`UPDATE users SET completed_lessons = array_remove(completed_lessons, ${lessonId}) WHERE id = ${currentUser.id}`;
-      } else {
-        await db`UPDATE users SET completed_lessons = array_append(completed_lessons, ${lessonId}) WHERE id = ${currentUser.id} AND NOT (${lessonId} = ANY(completed_lessons))`;
-      }
-      const [user] = await db`SELECT completed_lessons FROM users WHERE id = ${currentUser.id}`;
-      return jsonResponse(200, { completed_lessons: user.completed_lessons });
-    }
-
-    // Profits
-    if (method === 'GET' && path === '/user/profits') {
-      const data = await db`SELECT * FROM profits WHERE user_id = ${currentUser.id} ORDER BY created_at DESC`;
-      return jsonResponse(200, data);
-    }
-    if (method === 'POST' && path === '/user/profits') {
-      const { itemName, buyPrice, sellPrice, costs } = JSON.parse(event.body);
-      const [entry] = await db`INSERT INTO profits (user_id, item_name, buy_price, sell_price, costs, net_profit) VALUES (${currentUser.id}, ${itemName}, ${buyPrice}, ${sellPrice}, ${costs}, ${sellPrice - buyPrice - costs}) RETURNING *`;
-      return jsonResponse(200, entry);
     }
 
     return jsonResponse(404, { message: 'Not Found' });
   } catch (err) {
-    console.error("Critical API Error:", err);
-    return jsonResponse(500, { message: 'Greška na serveru.', details: err.message });
+    console.error("API Error:", err);
+    return jsonResponse(500, { message: 'Server Error', error: err.message });
   }
 };
