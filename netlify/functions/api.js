@@ -4,71 +4,108 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_123';
-const sql = postgres(process.env.NETLIFY_DATABASE_URL, { ssl: 'require' });
 
-// Database Initialization (Implicit Seed)
-const initDb = async () => {
-  await sql`CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    first_name TEXT,
-    last_name TEXT,
-    nickname TEXT,
-    phone TEXT,
-    is_approved BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-  )`;
-  
-  // Update schema if columns don't exist (basic migration)
-  try {
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE`;
-  } catch (e) {
-    console.log("Schema already up to date or columns exist.");
+// Pomoćna funkcija za uniformne JSON odgovore
+const jsonResponse = (statusCode, body) => ({
+  statusCode,
+  headers: { 
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+  },
+  body: JSON.stringify(body)
+});
+
+let sql;
+
+const connectDb = () => {
+  if (!sql) {
+    if (!process.env.NETLIFY_DATABASE_URL) {
+      throw new Error("Konfiguracija baze (NETLIFY_DATABASE_URL) nije pronađena u Netlify postavkama.");
+    }
+    sql = postgres(process.env.NETLIFY_DATABASE_URL, { 
+      ssl: 'require',
+      connect_timeout: 10,
+      idle_timeout: 20,
+      max: 10
+    });
   }
+  return sql;
+};
 
-  await sql`CREATE TABLE IF NOT EXISTS lessons (
-    id TEXT PRIMARY KEY,
-    "order" INTEGER,
-    title TEXT,
-    description TEXT,
-    content TEXT,
-    duration TEXT,
-    category TEXT
-  )`;
-  await sql`CREATE TABLE IF NOT EXISTS suppliers (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    "productName" TEXT,
-    "imageUrl" TEXT,
-    "buyLink" TEXT,
-    "isWhatsApp" BOOLEAN,
-    description TEXT
-  )`;
-  await sql`CREATE TABLE IF NOT EXISTS useful (
-    id TEXT PRIMARY KEY,
-    title TEXT,
-    category TEXT,
-    description TEXT,
-    content TEXT,
-    images TEXT[]
-  )`;
-  await sql`CREATE TABLE IF NOT EXISTS messages (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
-    content TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-  )`;
+const initDb = async (db) => {
+  try {
+    await db`CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'user',
+      first_name TEXT,
+      last_name TEXT,
+      nickname TEXT,
+      phone TEXT,
+      is_approved BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )`;
+    
+    // Provjera i dodavanje stupaca koji možda nedostaju
+    try {
+      await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
+      await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
+      await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT`;
+      await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`;
+      await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE`;
+    } catch (e) { /* Stupci vjerojatno već postoje */ }
+
+    await db`CREATE TABLE IF NOT EXISTS lessons (
+      id TEXT PRIMARY KEY,
+      "order" INTEGER,
+      title TEXT,
+      description TEXT,
+      content TEXT,
+      duration TEXT,
+      category TEXT
+    )`;
+    await db`CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      "productName" TEXT,
+      "imageUrl" TEXT,
+      "buyLink" TEXT,
+      "isWhatsApp" BOOLEAN,
+      description TEXT
+    )`;
+    await db`CREATE TABLE IF NOT EXISTS useful (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      category TEXT,
+      description TEXT,
+      content TEXT,
+      images TEXT[]
+    )`;
+    await db`CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      content TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )`;
+  } catch (err) {
+    console.error("Inicijalizacija baze nije uspjela:", err);
+    throw err;
+  }
 };
 
 exports.handler = async (event, context) => {
+  // Handle OPTIONS for CORS
+  if (event.httpMethod === 'OPTIONS') {
+    return jsonResponse(200, { message: 'OK' });
+  }
+
   try {
-    await initDb();
+    const db = connectDb();
+    await initDb(db);
+
     const path = event.path.replace(/\.netlify\/functions\/api/, '');
     const method = event.httpMethod;
     const authHeader = event.headers.authorization;
@@ -78,98 +115,94 @@ exports.handler = async (event, context) => {
       try {
         const token = authHeader.split(' ')[1];
         currentUser = jwt.verify(token, JWT_SECRET);
-      } catch (e) {}
+      } catch (e) {
+        // Token nevažeći, ali nastavljamo jer neke rute ne trebaju auth
+      }
     }
 
-    // --- PUBLIC ROUTES ---
+    // --- PUBLIC DATA ROUTES ---
     if (method === 'GET' && path === '/data') {
-      const lessons = await sql`SELECT * FROM lessons ORDER BY "order" ASC`;
-      const suppliers = await sql`SELECT * FROM suppliers`;
-      const useful = await sql`SELECT * FROM useful`;
-      return { 
-        statusCode: 200, 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lessons, suppliers, useful }) 
-      };
+      const lessons = await db`SELECT * FROM lessons ORDER BY "order" ASC`;
+      const suppliers = await db`SELECT * FROM suppliers`;
+      const useful = await db`SELECT * FROM useful`;
+      return jsonResponse(200, { lessons, suppliers, useful });
     }
 
     if (method === 'GET' && path === '/messages') {
-      const messages = await sql`
+      const messages = await db`
         SELECT m.*, u.email, u.role, u.nickname 
         FROM messages m 
         JOIN users u ON m.user_id = u.id 
         ORDER BY m.created_at ASC 
         LIMIT 50`;
-      return { 
-        statusCode: 200, 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(messages) 
-      };
+      return jsonResponse(200, messages);
     }
 
     // --- AUTH ROUTES ---
     if (method === 'POST' && path === '/auth/register') {
-      const { email, password, firstName, lastName, nickname, phone } = JSON.parse(event.body);
-      if (!email || !password) return { statusCode: 400, body: JSON.stringify({ message: 'Nedostaju podaci' }) };
+      const body = JSON.parse(event.body);
+      const { email, password, firstName, lastName, nickname, phone } = body;
+      
+      if (!email || !password) return jsonResponse(400, { message: 'Email i lozinka su obavezni.' });
       
       const hashedPassword = await bcrypt.hash(password, 10);
       const isAdmin = email === 'romano.polovic33@gmail.com';
       const role = isAdmin ? 'admin' : 'user';
-      const isApproved = isAdmin; // Admin is auto-approved
+      const isApproved = isAdmin;
 
       try {
-        const [user] = await sql`
+        const [user] = await db`
           INSERT INTO users (email, password, role, first_name, last_name, nickname, phone, is_approved) 
           VALUES (${email}, ${hashedPassword}, ${role}, ${firstName}, ${lastName}, ${nickname}, ${phone}, ${isApproved}) 
           RETURNING id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved"`;
         const token = jwt.sign(user, JWT_SECRET);
-        return { statusCode: 200, body: JSON.stringify({ user, token }) };
+        return jsonResponse(200, { user, token });
       } catch (e) {
-        console.error(e);
-        return { statusCode: 400, body: JSON.stringify({ message: 'Email već postoji ili greška u bazi' }) };
+        return jsonResponse(400, { message: 'Račun s ovim emailom već postoji.' });
       }
     }
 
     if (method === 'POST' && path === '/auth/login') {
       const { email, password } = JSON.parse(event.body);
-      const [user] = await sql`SELECT id, email, password, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users WHERE email = ${email}`;
+      const [user] = await db`SELECT id, email, password, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users WHERE email = ${email}`;
+      
       if (user && await bcrypt.compare(password, user.password)) {
         const { password: _, ...userSafe } = user;
         const token = jwt.sign(userSafe, JWT_SECRET);
-        return { statusCode: 200, body: JSON.stringify({ user: userSafe, token }) };
+        return jsonResponse(200, { user: userSafe, token });
       }
-      return { statusCode: 401, body: JSON.stringify({ message: 'Pogrešan email ili lozinka' }) };
+      return jsonResponse(401, { message: 'Pogrešan email ili lozinka.' });
     }
 
     if (method === 'GET' && path === '/auth/me') {
-      if (!currentUser) return { statusCode: 401, body: 'Unauthorized' };
-      // Fetch fresh status from DB to check if they were approved
-      const [user] = await sql`SELECT id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users WHERE id = ${currentUser.id}`;
-      return { statusCode: 200, body: JSON.stringify(user) };
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const [user] = await db`SELECT id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users WHERE id = ${currentUser.id}`;
+      if (!user) return jsonResponse(404, { message: 'Korisnik nije pronađen.' });
+      return jsonResponse(200, user);
     }
 
-    // --- PROTECTED ROUTES ---
-    if (!currentUser) return { statusCode: 401, body: 'Unauthorized' };
+    // --- PROTECTED ROUTES (MUST BE LOGGED IN) ---
+    if (!currentUser) return jsonResponse(401, { message: 'Potrebna prijava.' });
 
     if (method === 'POST' && path === '/messages') {
       const { content } = JSON.parse(event.body);
-      if (!content || content.length > 500) return { statusCode: 400, body: 'Invalid content' };
-      await sql`INSERT INTO messages (user_id, content) VALUES (${currentUser.id}, ${content})`;
-      return { statusCode: 200, body: JSON.stringify({ success: true }) };
+      if (!content || content.trim().length === 0) return jsonResponse(400, { message: 'Poruka ne može biti prazna.' });
+      await db`INSERT INTO messages (user_id, content) VALUES (${currentUser.id}, ${content})`;
+      return jsonResponse(200, { success: true });
     }
 
     // --- ADMIN ROUTES ---
-    if (currentUser.role !== 'admin') return { statusCode: 403, body: 'Forbidden' };
+    if (currentUser.role !== 'admin') return jsonResponse(403, { message: 'Nemate dozvolu za ovu akciju.' });
 
-    if (method === 'GET' && path === '/admin/lessons') return { statusCode: 200, body: JSON.stringify(await sql`SELECT * FROM lessons`) };
-    if (method === 'GET' && path === '/admin/suppliers') return { statusCode: 200, body: JSON.stringify(await sql`SELECT * FROM suppliers`) };
-    if (method === 'GET' && path === '/admin/users') return { statusCode: 200, body: JSON.stringify(await sql`SELECT id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users`) };
-    if (method === 'GET' && path === '/admin/useful') return { statusCode: 200, body: JSON.stringify(await sql`SELECT * FROM useful`) };
+    if (method === 'GET' && path === '/admin/lessons') return jsonResponse(200, await db`SELECT * FROM lessons`);
+    if (method === 'GET' && path === '/admin/suppliers') return jsonResponse(200, await db`SELECT * FROM suppliers`);
+    if (method === 'GET' && path === '/admin/users') return jsonResponse(200, await db`SELECT id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users`);
+    if (method === 'GET' && path === '/admin/useful') return jsonResponse(200, await db`SELECT * FROM useful`);
     
     if (method === 'POST' && path.startsWith('/admin/users/approve/')) {
       const id = path.split('/').pop();
-      await sql`UPDATE users SET is_approved = NOT is_approved WHERE id = ${id}`;
-      return { statusCode: 200, body: JSON.stringify({ success: true }) };
+      await db`UPDATE users SET is_approved = NOT is_approved WHERE id = ${id}`;
+      return jsonResponse(200, { success: true });
     }
 
     if (method === 'DELETE' && path.startsWith('/admin/')) {
@@ -177,15 +210,18 @@ exports.handler = async (event, context) => {
       const table = parts[2];
       const id = parts[3];
       const allowedTables = ['lessons', 'suppliers', 'users', 'useful'];
-      if (!allowedTables.includes(table)) return { statusCode: 400, body: 'Invalid table' };
+      if (!allowedTables.includes(table)) return jsonResponse(400, { message: 'Nevažeća tablica.' });
       
-      await sql`DELETE FROM ${sql(table)} WHERE id = ${id}`;
-      return { statusCode: 200, body: JSON.stringify({ success: true }) };
+      await db`DELETE FROM ${db(table)} WHERE id = ${id}`;
+      return jsonResponse(200, { success: true });
     }
 
-    return { statusCode: 404, body: 'Not Found' };
+    return jsonResponse(404, { message: 'Ruta nije pronađena.' });
   } catch (err) {
-    console.error(err);
-    return { statusCode: 500, body: JSON.stringify({ message: 'Internal Server Error', details: err.message }) };
+    console.error("API Error:", err);
+    return jsonResponse(500, { 
+      message: 'Greška na serveru ili problem s bazom podataka.', 
+      details: err.message 
+    });
   }
 };

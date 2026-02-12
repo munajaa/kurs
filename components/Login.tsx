@@ -36,12 +36,18 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify(formData)
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Nešto je pošlo po zlu');
-      
-      onLogin(data.user, data.token);
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Neuspješna operacija');
+        onLogin(data.user, data.token);
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Greška na serveru (nepoznat format)');
+      }
     } catch (err: any) {
-      setError(err.message);
+      console.error("Login error:", err);
+      setError(err.message || "Neuspješno povezivanje sa serverom.");
     } finally {
       setLoading(false);
     }
@@ -89,7 +95,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </div>
         
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl">
+          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl animate-in shake duration-300">
             <p className="text-red-400 text-xs font-bold text-center">{error}</p>
           </div>
         )}
