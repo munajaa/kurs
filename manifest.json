@@ -1,0 +1,19 @@
+
+{
+  "name": "FlipZone Balkan Hub",
+  "short_name": "FlipZone",
+  "description": "Premium video lekcije sa Live Chat podrškom i Admin Dashboardom.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#010409",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3665/3665939.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -14,6 +14,6 @@
     "esbuild": "^0.20.0"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir dist && npx esbuild index.tsx --bundle --minify --format=esm --outfile=dist/index.js --loader:.tsx=tsx --loader:.ts=ts --external:react --external:react-dom && cp index.html dist/"
+    "build": "rm -rf dist && mkdir dist && npx esbuild index.tsx --bundle --minify --format=esm --outfile=dist/index.js --loader:.tsx=tsx --loader:.ts=ts --external:react --external:react-dom && cp index.html manifest.json sw.js dist/"
   }
 }

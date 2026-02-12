@@ -4,7 +4,6 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = 'flipzone_balkan_secret_2026_secure_key';
-// Connection string direktno ugrađen prema zahtjevu korisnika
 const DB_URL = 'postgresql://neondb_owner:npg_9KFgPWvHqJO8@ep-fragrant-mud-aecb46z9-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require';
 
 const jsonResponse = (statusCode, body) => ({
@@ -34,6 +33,7 @@ const getSql = () => {
 
 const initDb = async (db) => {
   try {
+    // 1. Users Table
     await db`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -44,14 +44,41 @@ const initDb = async (db) => {
       nickname TEXT,
       phone TEXT,
       is_approved BOOLEAN DEFAULT FALSE,
+      completed_lessons TEXT[] DEFAULT '{}',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
+    
+    // 2. Profits Table
+    await db`CREATE TABLE IF NOT EXISTS profits (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      item_name TEXT NOT NULL,
+      buy_price DECIMAL(10,2) NOT NULL,
+      sell_price DECIMAL(10,2) NOT NULL,
+      costs DECIMAL(10,2) DEFAULT 0,
+      net_profit DECIMAL(10,2) NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+    // 3. Channels Table
+    await db`CREATE TABLE IF NOT EXISTS channels (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT DEFAULT 'public',
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+    // 4. Messages Table
     await db`CREATE TABLE IF NOT EXISTS messages (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      content TEXT,
+      channel_id TEXT REFERENCES channels(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
+
+    // 5. Lessons Table
     await db`CREATE TABLE IF NOT EXISTS lessons (
       id TEXT PRIMARY KEY,
       "order" INTEGER,
@@ -61,15 +88,56 @@ const initDb = async (db) => {
       duration TEXT,
       category TEXT
     )`;
+
+    // 6. Suppliers Table
+    await db`CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      product_name TEXT,
+      image_url TEXT,
+      buy_link TEXT,
+      is_whatsapp BOOLEAN DEFAULT FALSE,
+      description TEXT
+    )`;
+
+    // 7. Announcements Table
+    await db`CREATE TABLE IF NOT EXISTS announcements (
+      id TEXT PRIMARY KEY,
+      date TEXT,
+      title TEXT,
+      message TEXT,
+      tag TEXT,
+      image_url TEXT
+    )`;
+
+    // 8. Useful Items Table
+    await db`CREATE TABLE IF NOT EXISTS useful_items (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      description TEXT,
+      category TEXT,
+      content TEXT,
+      images TEXT[]
+    )`;
+
+    // Initialize Default Channels if empty
+    const channels = await db`SELECT id FROM channels WHERE type = 'public' LIMIT 1`;
+    if (channels.length === 0) {
+      await db`INSERT INTO channels (id, name, type) VALUES 
+        ('opcenito', '👋 Opcenito', 'public'),
+        ('trgovina', '💰 Trgovina i Scale', 'public'),
+        ('resursi', '📚 Dijeljenje Resursa', 'public'),
+        ('pitanja', '❓ Q&A Podrška', 'public'),
+        ('showcase', '📸 Rezultati', 'public'),
+        ('market', '📉 Tržišni Trendovi', 'public')`;
+    }
   } catch (err) {
-    // Tiho ignoriramo greške inicijalizacije ako tablice već postoje
+    console.error("Critical DB Init Error:", err);
   }
 };
 
 exports.handler = async (event, context) => {
-  // Isključujemo check-ove okruženja radi brzine
   context.callbackWaitsForEmptyEventLoop = false;
-
   if (event.httpMethod === 'OPTIONS') return jsonResponse(200, { message: 'OK' });
 
   try {
@@ -86,97 +154,208 @@ exports.handler = async (event, context) => {
       try {
         const token = authHeader.split(' ')[1];
         currentUser = jwt.verify(token, JWT_SECRET);
-      } catch (e) {}
+      } catch (e) {
+        // Token invalid
+      }
     }
 
-    // STATUS
-    if (path === '/status' || path === '/status/') {
-      return jsonResponse(200, { status: "online", db: "connected" });
-    }
+    // --- AUTHENTICATION ---
 
-    // LESSONS DATA
-    if (method === 'GET' && (path === '/data' || path === '/data/')) {
-      const lessons = await db`SELECT * FROM lessons ORDER BY "order" ASC`;
-      return jsonResponse(200, { lessons: lessons || [] });
-    }
-
-    // AUTH - REGISTER
+    // REGISTER (FIXED)
     if (method === 'POST' && (path === '/auth/register' || path === '/auth/register/')) {
       const { email, password, firstName, lastName, nickname, phone } = JSON.parse(event.body);
-      if (!email || !password) return jsonResponse(400, { message: 'Email i lozinka su obavezni.' });
       
+      if (!email || !password) {
+        return jsonResponse(400, { message: 'E-mail i lozinka su obavezni.' });
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
       const hashedPassword = await bcrypt.hash(password, 10);
-      const isAdmin = email.toLowerCase() === 'romano.polovic33@gmail.com';
-      
+      const isAdmin = normalizedEmail === 'romano.polovic33@gmail.com';
+
       try {
-        const [user] = await db`
+        const [newUser] = await db`
           INSERT INTO users (email, password, role, first_name, last_name, nickname, phone, is_approved) 
-          VALUES (${email}, ${hashedPassword}, ${isAdmin ? 'admin' : 'user'}, ${firstName}, ${lastName}, ${nickname}, ${phone}, ${isAdmin}) 
-          RETURNING id, email, role, nickname, is_approved as "isApproved"`;
-        const token = jwt.sign(user, JWT_SECRET);
-        return jsonResponse(200, { user, token });
-      } catch (e) {
-        return jsonResponse(400, { message: 'Email je već u upotrebi.' });
+          VALUES (${normalizedEmail}, ${hashedPassword}, ${isAdmin ? 'admin' : 'user'}, ${firstName}, ${lastName}, ${nickname}, ${phone}, ${isAdmin}) 
+          RETURNING id, email, role, nickname, is_approved as "isApproved", completed_lessons
+        `;
+        
+        const token = jwt.sign(newUser, JWT_SECRET);
+        return jsonResponse(200, { user: newUser, token });
+      } catch (e) { 
+        console.error("Register Error:", e);
+        return jsonResponse(400, { message: 'Korisnik s ovim e-mailom već postoji.' }); 
       }
     }
 
-    // AUTH - LOGIN
+    // LOGIN (FIXED)
     if (method === 'POST' && (path === '/auth/login' || path === '/auth/login/')) {
       const { email, password } = JSON.parse(event.body);
-      const [user] = await db`SELECT id, email, password, role, nickname, is_approved FROM users WHERE email = ${email}`;
       
-      if (user && await bcrypt.compare(password, user.password)) {
-        const { password: _, is_approved, ...userSafe } = user;
-        userSafe.isApproved = is_approved;
-        const token = jwt.sign(userSafe, JWT_SECRET);
-        return jsonResponse(200, { user: userSafe, token });
+      if (!email || !password) {
+        return jsonResponse(400, { message: 'E-mail i lozinka su obavezni.' });
       }
-      return jsonResponse(401, { message: 'Pogrešni podaci za prijavu.' });
+      
+      const normalizedEmail = email.trim().toLowerCase();
+      const [user] = await db`SELECT * FROM users WHERE email = ${normalizedEmail}`;
+
+      if (user) {
+        const isValid = await bcrypt.compare(password, user.password);
+        if (isValid) {
+          const { password: _, is_approved, ...userSafe } = user;
+          userSafe.isApproved = is_approved;
+          userSafe.completed_lessons = user.completed_lessons || [];
+          const token = jwt.sign(userSafe, JWT_SECRET);
+          return jsonResponse(200, { user: userSafe, token });
+        }
+      }
+      return jsonResponse(401, { message: 'Pogrešan e-mail ili lozinka.' });
     }
 
-    // AUTH - ME
+    // ME (VERIFY)
     if (method === 'GET' && (path === '/auth/me' || path === '/auth/me/')) {
       if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
-      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved" FROM users WHERE id = ${currentUser.id}`;
-      return user ? jsonResponse(200, user) : jsonResponse(404, { message: 'User not found' });
+      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
+      if (!user) return jsonResponse(404, { message: 'Korisnik nije pronađen.' });
+      return jsonResponse(200, user);
     }
 
-    // MESSAGES
-    if (method === 'GET' && (path === '/messages' || path === '/messages/')) {
-      const msgs = await db`
-        SELECT m.id, m.content, m.created_at, m.user_id, u.nickname, u.role, u.email 
-        FROM messages m 
-        JOIN users u ON m.user_id = u.id 
-        ORDER BY m.created_at ASC LIMIT 50`;
-      return jsonResponse(200, msgs || []);
+    // --- GENERAL DATA ---
+
+    if (method === 'GET' && (path === '/data' || path === '/data/')) {
+      const lessons = await db`SELECT * FROM lessons ORDER BY "order" ASC`;
+      const suppliers = await db`SELECT * FROM suppliers ORDER BY id ASC`;
+      const announcements = await db`SELECT * FROM announcements ORDER BY date DESC`;
+      const useful = await db`SELECT * FROM useful_items ORDER BY id ASC`;
+      const userCount = await db`SELECT COUNT(*) FROM users`;
+      const stats = {
+        users: userCount[0].count,
+        lessons: lessons.length,
+        suppliers: suppliers.length
+      };
+      return jsonResponse(200, { lessons, suppliers, announcements, useful, stats });
     }
 
-    if (method === 'POST' && (path === '/messages' || path === '/messages/')) {
-      if (!currentUser) return jsonResponse(401, { message: 'Prijavi se.' });
+    // --- USER PROFITS ---
+
+    if (method === 'GET' && (path === '/user/profits' || path === '/user/profits/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const data = await db`SELECT * FROM profits WHERE user_id = ${currentUser.id} ORDER BY created_at DESC`;
+      return jsonResponse(200, data);
+    }
+
+    if (method === 'POST' && (path === '/user/profits' || path === '/user/profits/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const { itemName, buyPrice, sellPrice, costs } = JSON.parse(event.body);
+      const netProfit = sellPrice - buyPrice - costs;
+      const [entry] = await db`INSERT INTO profits (user_id, item_name, buy_price, sell_price, costs, net_profit) VALUES (${currentUser.id}, ${itemName}, ${buyPrice}, ${sellPrice}, ${costs}, ${netProfit}) RETURNING *`;
+      return jsonResponse(200, entry);
+    }
+
+    if (method === 'DELETE' && path.startsWith('/user/profits/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const profitId = path.split('/').pop();
+      await db`DELETE FROM profits WHERE id = ${profitId} AND user_id = ${currentUser.id}`;
+      return jsonResponse(200, { success: true });
+    }
+
+    // --- LESSON PROGRESS ---
+
+    if (method === 'POST' && (path === '/user/lessons/complete' || path === '/user/lessons/complete/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const { lessonId } = JSON.parse(event.body);
+      const action = event.headers['x-action'];
+
+      if (action === 'remove') {
+        await db`UPDATE users SET completed_lessons = array_remove(completed_lessons, ${lessonId}) WHERE id = ${currentUser.id}`;
+      } else {
+        await db`UPDATE users SET completed_lessons = array_append(completed_lessons, ${lessonId}) WHERE id = ${currentUser.id} AND NOT (${lessonId} = ANY(completed_lessons))`;
+      }
+      
+      const [user] = await db`SELECT completed_lessons FROM users WHERE id = ${currentUser.id}`;
+      return jsonResponse(200, { completed_lessons: user.completed_lessons });
+    }
+
+    // --- CHAT SYSTEM ---
+
+    if (method === 'GET' && path.startsWith('/chat/channels')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      let channels;
+      if (currentUser.role === 'admin') {
+        channels = await db`SELECT c.*, u.nickname FROM channels c LEFT JOIN users u ON c.user_id = u.id ORDER BY c.type ASC, c.created_at DESC`;
+      } else {
+        channels = await db`SELECT c.*, u.nickname FROM channels c LEFT JOIN users u ON c.user_id = u.id WHERE c.type = 'public' OR c.user_id = ${currentUser.id} ORDER BY c.type ASC, c.created_at DESC`;
+      }
+      return jsonResponse(200, channels);
+    }
+
+    if (method === 'GET' && path.startsWith('/chat/messages/')) {
+      const channelId = path.split('/').pop();
+      const msgs = await db`SELECT m.*, u.nickname, u.role, u.email FROM messages m JOIN users u ON m.user_id = u.id WHERE m.channel_id = ${channelId} ORDER BY m.created_at ASC LIMIT 100`;
+      return jsonResponse(200, msgs);
+    }
+
+    if (method === 'POST' && path.startsWith('/chat/messages/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const channelId = path.split('/').pop();
       const { content } = JSON.parse(event.body);
-      if (!content) return jsonResponse(400, { message: 'Prazna poruka.' });
-      await db`INSERT INTO messages (user_id, content) VALUES (${currentUser.id}, ${content})`;
+      await db`INSERT INTO messages (channel_id, user_id, content) VALUES (${channelId}, ${currentUser.id}, ${content})`;
       return jsonResponse(200, { success: true });
     }
 
-    // ADMIN - USERS
-    if (method === 'GET' && (path === '/admin/users' || path === '/admin/users/')) {
-      if (currentUser?.role !== 'admin') return jsonResponse(403, { message: 'Forbidden' });
-      const users = await db`SELECT id, email, role, first_name as "firstName", last_name as "lastName", nickname, phone, is_approved as "isApproved" FROM users`;
-      return jsonResponse(200, users);
+    if (method === 'POST' && (path === '/chat/tickets' || path === '/chat/tickets/')) {
+      if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
+      const ticketId = 'ticket-' + Math.random().toString(36).substring(2, 9);
+      const [ticket] = await db`INSERT INTO channels (id, name, type, user_id) VALUES (${ticketId}, ${'Ticket: ' + (currentUser.nickname || currentUser.email.split('@')[0])}, 'ticket', ${currentUser.id}) RETURNING *`;
+      return jsonResponse(200, ticket);
     }
 
-    if (method === 'POST' && path.includes('/admin/users/approve/')) {
-      if (currentUser?.role !== 'admin') return jsonResponse(403, { message: 'Forbidden' });
-      const id = path.split('/').pop();
-      await db`UPDATE users SET is_approved = NOT is_approved WHERE id = ${id}`;
-      return jsonResponse(200, { success: true });
+    // --- ADMIN ACCESS ---
+
+    if (currentUser?.role === 'admin') {
+      if (method === 'GET' && path === '/admin/users') {
+        const users = await db`SELECT * FROM users ORDER BY created_at DESC`;
+        return jsonResponse(200, users.map(u => ({...u, isApproved: u.is_approved, firstName: u.first_name, lastName: u.last_name})));
+      }
+      if (method === 'POST' && path.startsWith('/admin/users/approve/')) {
+        const id = path.split('/').pop();
+        await db`UPDATE users SET is_approved = NOT is_approved WHERE id = ${id}`;
+        return jsonResponse(200, { success: true });
+      }
+      
+      const tables = ['lessons', 'suppliers', 'announcements', 'useful'];
+      const parts = path.split('/');
+      const table = parts[2];
+      if (tables.includes(table)) {
+        const realTable = table === 'useful' ? 'useful_items' : table;
+        if (method === 'GET') {
+          const data = await db`SELECT * FROM ${db(realTable)} ORDER BY id ASC`;
+          return jsonResponse(200, data);
+        }
+        if (method === 'POST') {
+          const body = JSON.parse(event.body);
+          if (!body.id) body.id = Math.random().toString(36).substring(2, 9);
+          await db`INSERT INTO ${db(realTable)} ${db(body)}`;
+          return jsonResponse(200, { success: true });
+        }
+        if (method === 'PUT') {
+          const id = parts[3];
+          const body = JSON.parse(event.body);
+          delete body.id;
+          await db`UPDATE ${db(realTable)} SET ${db(body)} WHERE id = ${id}`;
+          return jsonResponse(200, { success: true });
+        }
+        if (method === 'DELETE') {
+          const id = parts[3];
+          await db`DELETE FROM ${db(realTable)} WHERE id = ${id}`;
+          return jsonResponse(200, { success: true });
+        }
+      }
     }
 
     return jsonResponse(404, { message: 'Not Found' });
-
   } catch (err) {
     console.error("Critical API Error:", err);
-    return jsonResponse(500, { message: 'Greška na serveru.', details: err.message });
+    return jsonResponse(500, { message: 'Došlo je do pogreške na poslužitelju.', details: err.message });
   }
 };

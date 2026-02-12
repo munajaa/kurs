@@ -39,80 +39,98 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Neuspješna operacija');
+        if (!res.ok) throw new Error(data.message || 'Greška pri obradi zahtjeva');
         onLogin(data.user, data.token);
       } else {
         const text = await res.text();
-        throw new Error(text || 'Greška na serveru (nepoznat format)');
+        throw new Error(text || 'Greška na serveru');
       }
     } catch (err: any) {
-      console.error("Login error:", err);
-      setError(err.message || "Neuspješno povezivanje sa serverom.");
+      setError(err.message || "Neuspješno povezivanje s poslužiteljem.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className={`max-w-md mx-auto p-8 md:p-12 glass rounded-[3rem] animate-in fade-in slide-in-from-bottom-12 duration-1000 ${isRegister ? 'max-w-xl' : 'max-w-md'}`}>
-      <div className="text-center mb-10">
-        <div className="w-16 h-16 bg-blue-600 rounded-3xl flex items-center justify-center font-black text-3xl mx-auto mb-6 shadow-2xl shadow-blue-600/30 text-white">F</div>
-        <h2 className="text-4xl font-black text-white tracking-tight mb-2">
-          {isRegister ? 'Novi Račun' : 'Dobrodošao nazad'}
+    <div className={`w-full max-w-2xl mx-auto p-12 md:p-20 glass rounded-[4rem] animate-in fade-in slide-in-from-bottom-20 duration-1000 border border-white/5 shadow-[0_50px_100px_rgba(0,0,0,0.5)]`}>
+      <div className="text-center mb-14">
+        <div className="w-20 h-20 bg-blue-600 rounded-[2rem] flex items-center justify-center font-black text-4xl mx-auto mb-8 shadow-2xl shadow-blue-600/30 text-white transition-transform hover:rotate-6">F</div>
+        <h2 className="text-5xl font-black text-white tracking-tighter mb-4 leading-none">
+          {isRegister ? 'Pridruži se Mreži' : 'Autorizacija'}
         </h2>
-        <p className="text-slate-500 font-medium">FlipZone Balkan Hub</p>
+        <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.4em]">FlipZone Balkan Learning Hub</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-6">
         {isRegister && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-500">
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Ime</label>
-              <input required name="firstName" value={formData.firstName} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none" placeholder="Marko" />
+              <input required name="firstName" value={formData.firstName} onChange={handleChange} className="login-input" placeholder="Ivan" />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Prezime</label>
-              <input required name="lastName" value={formData.lastName} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none" placeholder="Marić" />
+              <input required name="lastName" value={formData.lastName} onChange={handleChange} className="login-input" placeholder="Horvat" />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nadimak</label>
-              <input required name="nickname" value={formData.nickname} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none" placeholder="Mare123" />
+              <input required name="nickname" value={formData.nickname} onChange={handleChange} className="login-input" placeholder="ResellerMaster" />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefon</label>
-              <input required name="phone" value={formData.phone} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none" placeholder="+385..." />
+              <input required name="phone" value={formData.phone} onChange={handleChange} className="login-input" placeholder="+385 91..." />
             </div>
           </div>
         )}
 
         <div className="space-y-1">
           <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email Adresa</label>
-          <input required type="email" name="email" value={formData.email} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none transition-all" placeholder="tvoj@email.com" />
+          <input required type="email" name="email" value={formData.email} onChange={handleChange} className="login-input" placeholder="tvoj@email.com" />
         </div>
         <div className="space-y-1">
           <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Lozinka</label>
-          <input required type="password" name="password" value={formData.password} onChange={handleChange} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white focus:border-blue-500 outline-none transition-all" placeholder="••••••••" />
+          <input required type="password" name="password" value={formData.password} onChange={handleChange} className="login-input" placeholder="••••••••" />
         </div>
         
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl animate-in shake duration-300">
-            <p className="text-red-400 text-xs font-bold text-center">{error}</p>
+          <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-2xl animate-in shake duration-300">
+            <p className="text-red-400 text-[11px] font-black uppercase text-center tracking-widest">{error}</p>
           </div>
         )}
         
-        <button disabled={loading} className="w-full py-5 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50 text-xs uppercase tracking-widest mt-2">
-          {loading ? 'Slanje...' : isRegister ? 'ZATRAŽI PRISTUP' : 'PRIJAVI SE'}
+        <button disabled={loading} className="w-full py-6 bg-blue-600 text-white font-black rounded-[2rem] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-600/30 active:scale-[0.98] text-xs uppercase tracking-[0.3em] mt-8">
+          {loading ? 'SINKRONIZACIJA...' : isRegister ? 'ZATRAŽI PRISTUP' : 'PRISTUPI HUB-U'}
         </button>
       </form>
       
-      <div className="mt-10 pt-8 border-t border-white/5 text-center">
+      <div className="mt-14 pt-10 border-t border-white/5 text-center">
         <p className="text-slate-500 text-sm font-medium">
-          {isRegister ? 'Već imaš račun?' : 'Želiš se pridružiti?'}{' '}
-          <button onClick={() => setIsRegister(!isRegister)} className="text-blue-500 font-black hover:underline ml-1">
-            {isRegister ? 'Prijavi se' : 'Registriraj se'}
+          {isRegister ? 'Već imaš profil?' : 'Želiš postati član?'}{' '}
+          <button type="button" onClick={() => { setIsRegister(!isRegister); setError(''); }} className="text-blue-500 font-black hover:underline ml-1">
+            {isRegister ? 'Prijavi se ovdje' : 'Registriraj se sada'}
           </button>
         </p>
       </div>
+      
+      <style>{`
+        .login-input {
+          width: 100%;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 1.5rem;
+          padding: 1.2rem 1.8rem;
+          color: white;
+          outline: none;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .login-input:focus {
+          border-color: #3b82f6;
+          background: rgba(255,255,255,0.06);
+          box-shadow: 0 0 30px rgba(59, 130, 246, 0.1);
+          transform: translateY(-2px);
+        }
+      `}</style>
     </div>
   );
 };

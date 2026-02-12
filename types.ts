@@ -39,6 +39,17 @@ export interface UsefulItem {
   link?: string;
 }
 
+export interface ProfitEntry {
+  id: number;
+  user_id: number;
+  item_name: string;
+  buy_price: number;
+  sell_price: number;
+  costs: number;
+  net_profit: number;
+  created_at: string;
+}
+
 export interface User {
   id: number;
   email: string;
@@ -48,11 +59,22 @@ export interface User {
   nickname?: string;
   phone?: string;
   isApproved: boolean;
+  completed_lessons?: string[];
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  type: 'public' | 'ticket';
+  user_id?: number;
+  nickname?: string;
 }
 
 export interface Message {
   id: number;
+  channel_id: string;
   user_id: number;
+  nickname: string;
   email: string;
   role: string;
   content: string;
@@ -63,4 +85,4 @@ export interface UserProgress {
   completedLessonIds: string[];
 }
 
-export type View = 'home' | 'lessons' | 'suppliers' | 'announcements' | 'invoices' | 'useful' | 'chat' | 'admin' | 'login';
+export type View = 'home' | 'lessons' | 'suppliers' | 'announcements' | 'invoices' | 'useful' | 'chat' | 'admin' | 'login' | 'profile';
