@@ -10,9 +10,10 @@
     "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "esbuild": "^0.20.0"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir dist && cp index.html index.tsx App.tsx types.ts dist/ && cp -r components data dist/"
+    "build": "rm -rf dist && mkdir dist && npx esbuild index.tsx --bundle --minify --format=esm --outfile=dist/index.js --loader:.tsx=tsx --loader:.ts=ts --external:react --external:react-dom && cp index.html dist/"
   }
 }
