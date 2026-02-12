@@ -28,7 +28,7 @@ const App: React.FC = () => {
 
   const fetchAppData = useCallback(async () => {
     try {
-      const res = await fetch('/.netlify/functions/api/data');
+      const res = await fetch('/api/data');
       if (res.ok) {
         const data = await res.json();
         if (data.lessons?.length) setLessons(data.lessons);
@@ -40,7 +40,7 @@ const App: React.FC = () => {
 
   const checkAuth = useCallback(async (authToken: string) => {
     try {
-      const res = await fetch('/.netlify/functions/api/auth/me', {
+      const res = await fetch('/api/auth/me', {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       if (res.ok) {
@@ -64,6 +64,17 @@ const App: React.FC = () => {
     }
     fetchAppData();
   }, [token, fetchAppData, checkAuth]);
+
+  // Polling za status odobrenja svakih 10 sekundi ako korisnik nije odobren
+  useEffect(() => {
+    let interval: any;
+    if (user && !user.isApproved && token) {
+      interval = setInterval(() => {
+        checkAuth(token);
+      }, 10000);
+    }
+    return () => clearInterval(interval);
+  }, [user, token, checkAuth]);
 
   const login = (userData: User, userToken: string) => {
     setUser(userData);
@@ -108,7 +119,7 @@ const App: React.FC = () => {
     );
   }
 
-  // Mandatory Login
+  // --- MANDATORY LOGIN ---
   if (!user) {
     return (
       <div className="min-h-screen pt-20 px-6">
@@ -117,21 +128,30 @@ const App: React.FC = () => {
     );
   }
 
-  // Waiting for Approval Screen
+  // --- WAITING FOR APPROVAL SCREEN ---
   if (!user.isApproved) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center">
         <div className="max-w-md glass p-12 rounded-[3rem] space-y-8 animate-in fade-in zoom-in duration-700">
-           <div className="w-20 h-20 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto border border-yellow-500/20">
-             <svg className="w-10 h-10 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-             </svg>
+           <div className="relative mx-auto w-24 h-24">
+             <div className="absolute inset-0 bg-yellow-500/20 rounded-full animate-ping"></div>
+             <div className="relative w-24 h-24 bg-yellow-500/10 rounded-full flex items-center justify-center border border-yellow-500/30">
+               <svg className="w-12 h-12 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+               </svg>
+             </div>
            </div>
            <div className="space-y-4">
              <h2 className="text-3xl font-black text-white tracking-tight">Pristup na čekanju</h2>
-             <p className="text-slate-400 font-medium">Hvala ti na registraciji, <span className="text-white">@{user.nickname || user.email.split('@')[0]}</span>. Tvoj zahtjev je poslan adminu na odobrenje.</p>
+             <p className="text-slate-400 font-medium leading-relaxed">
+               Hvala ti na prijavi, <span className="text-blue-500">@{user.nickname || user.email.split('@')[0]}</span>.<br/>
+               Admin pregledava tvoj profil. Čim te odobri, stranica će se automatski osvježiti.
+             </p>
            </div>
-           <button onClick={logout} className="text-slate-500 hover:text-white font-bold text-xs uppercase tracking-widest underline decoration-2 underline-offset-8">Odjavi se</button>
+           <div className="pt-4 flex flex-col gap-4">
+             <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Provjera statusa svakih 10s...</div>
+             <button onClick={logout} className="text-slate-500 hover:text-white font-bold text-xs uppercase tracking-widest underline decoration-2 underline-offset-8 transition-all">Odjavi se / Promijeni račun</button>
+           </div>
         </div>
       </div>
     );

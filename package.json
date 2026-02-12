@@ -13,6 +13,6 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "build": "echo 'No build step needed for frontend, bundling functions...'"
+    "build": "rm -rf dist && mkdir dist && cp index.html index.tsx App.tsx types.ts dist/ && cp -r components data dist/"
   }
 }
