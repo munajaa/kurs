@@ -18,32 +18,27 @@ const jsonResponse = (statusCode, body) => ({
 });
 
 let sql;
-
 const getSql = () => {
   if (!sql) {
     sql = postgres(DB_URL, { 
       ssl: 'require',
       connect_timeout: 15,
       idle_timeout: 20,
-      max: 10,
-      onnotice: () => {}
+      max: 10
     });
   }
   return sql;
 };
 
-// Funkcija koja osigurava bazu i puni je početnim podacima ako je prazna
 const syncDatabase = async (db) => {
   try {
+    // Tablice Korisnika i Sadržaja
     await db`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       role TEXT DEFAULT 'user',
-      first_name TEXT,
-      last_name TEXT,
       nickname TEXT,
-      phone TEXT,
       is_approved BOOLEAN DEFAULT FALSE,
       completed_lessons TEXT[] DEFAULT '{}',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -77,7 +72,6 @@ const syncDatabase = async (db) => {
       title TEXT,
       message TEXT,
       tag TEXT,
-      image_url TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
@@ -87,15 +81,14 @@ const syncDatabase = async (db) => {
       description TEXT,
       category TEXT,
       content TEXT,
-      images TEXT[],
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
+    // Chat Tablice
     await db`CREATE TABLE IF NOT EXISTS channels (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       type TEXT DEFAULT 'public',
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
@@ -107,17 +100,11 @@ const syncDatabase = async (db) => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
-    // Seed početnih kanala
-    const channelExists = await db`SELECT id FROM channels WHERE id = 'opcenito'`;
-    if (channelExists.length === 0) {
-      await db`INSERT INTO channels (id, name, type) VALUES 
-        ('opcenito', '👋 Opcenito', 'public'),
-        ('trgovina', '💰 Trgovina i Scale', 'public'),
-        ('resursi', '📚 Dijeljenje Resursa', 'public')`;
+    const chCount = await db`SELECT count(*) FROM channels`;
+    if (parseInt(chCount[0].count) === 0) {
+      await db`INSERT INTO channels (id, name, type) VALUES ('opcenito', '👋 Opcenito', 'public'), ('trgovina', '💰 Trgovina', 'public')`;
     }
-  } catch (err) {
-    console.error("DB Sync Error:", err);
-  }
+  } catch (err) { console.error("DB Sync Error:", err); }
 };
 
 exports.handler = async (event, context) => {
@@ -134,39 +121,29 @@ exports.handler = async (event, context) => {
     let currentUser = null;
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        currentUser = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
-      } catch (e) {}
+      try { currentUser = jwt.verify(authHeader.split(' ')[1], JWT_SECRET); } catch (e) {}
     }
 
-    // AUTH Rute
+    // --- JAVNE RUTE ---
     if (method === 'POST' && path.includes('/auth/register')) {
-      const body = JSON.parse(event.body);
-      const email = body.email.trim().toLowerCase();
-      const existing = await db`SELECT id FROM users WHERE email = ${email}`;
-      if (existing.length > 0) return jsonResponse(400, { message: 'Email već postoji.' });
-
-      const hashed = await bcrypt.hash(body.password, 10);
-      const isAdmin = email === 'romano.polovic33@gmail.com';
-      const [user] = await db`
-        INSERT INTO users (email, password, role, first_name, last_name, nickname, phone, is_approved) 
-        VALUES (${email}, ${hashed}, ${isAdmin ? 'admin' : 'user'}, ${body.firstName}, ${body.lastName}, ${body.nickname}, ${body.phone}, ${isAdmin}) 
-        RETURNING id, email, role, nickname, is_approved as "isApproved", completed_lessons
-      `;
-      const token = jwt.sign(user, JWT_SECRET);
-      return jsonResponse(200, { user, token });
+      const { email, password, nickname } = JSON.parse(event.body);
+      const exists = await db`SELECT id FROM users WHERE email = ${email.toLowerCase()}`;
+      if (exists.length > 0) return jsonResponse(400, { message: 'Email već postoji.' });
+      const hashed = await bcrypt.hash(password, 10);
+      const isAdmin = email.toLowerCase() === 'romano.polovic33@gmail.com';
+      const [user] = await db`INSERT INTO users (email, password, nickname, role, is_approved) VALUES (${email.toLowerCase()}, ${hashed}, ${nickname}, ${isAdmin ? 'admin' : 'user'}, ${isAdmin}) RETURNING id, email, nickname, role, is_approved as "isApproved"`;
+      return jsonResponse(200, { user, token: jwt.sign(user, JWT_SECRET) });
     }
 
     if (method === 'POST' && path.includes('/auth/login')) {
       const { email, password } = JSON.parse(event.body);
-      const [user] = await db`SELECT * FROM users WHERE email = ${email.trim().toLowerCase()}`;
+      const [user] = await db`SELECT * FROM users WHERE email = ${email.toLowerCase()}`;
       if (user && await bcrypt.compare(password, user.password)) {
         const { password: _, is_approved, ...safe } = user;
         safe.isApproved = is_approved;
-        safe.completed_lessons = user.completed_lessons || [];
         return jsonResponse(200, { user: safe, token: jwt.sign(safe, JWT_SECRET) });
       }
-      return jsonResponse(401, { message: 'Pogrešan email ili lozinka.' });
+      return jsonResponse(401, { message: 'Krivi podaci.' });
     }
 
     if (method === 'GET' && path === '/data') {
@@ -177,57 +154,45 @@ exports.handler = async (event, context) => {
       return jsonResponse(200, { lessons, suppliers, announcements, useful });
     }
 
-    // Zaštićene rute
-    if (!currentUser) return jsonResponse(401, { message: 'Unauthorized' });
-
-    if (method === 'GET' && path.includes('/auth/me')) {
-      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
-      return jsonResponse(200, user);
-    }
+    // --- ZAŠTIĆENE RUTE ---
+    if (!currentUser) return jsonResponse(401, { message: 'Nema tokena.' });
 
     // Chat
-    if (method === 'GET' && path.startsWith('/chat/channels')) {
-      const channels = currentUser.role === 'admin' 
-        ? await db`SELECT c.*, u.nickname FROM channels c LEFT JOIN users u ON c.user_id = u.id ORDER BY c.type ASC, c.created_at DESC`
-        : await db`SELECT c.*, u.nickname FROM channels c LEFT JOIN users u ON c.user_id = u.id WHERE c.type = 'public' OR c.user_id = ${currentUser.id} ORDER BY c.type ASC, c.created_at DESC`;
-      return jsonResponse(200, channels);
+    if (path.startsWith('/chat/channels')) {
+      return jsonResponse(200, await db`SELECT * FROM channels ORDER BY type ASC`);
     }
-
-    if (method === 'GET' && path.startsWith('/chat/messages/')) {
-      const channelId = path.split('/').pop();
-      const msgs = await db`SELECT m.*, u.nickname, u.role FROM messages m JOIN users u ON m.user_id = u.id WHERE m.channel_id = ${channelId} ORDER BY m.created_at ASC LIMIT 100`;
-      return jsonResponse(200, msgs);
-    }
-
-    if (method === 'POST' && path.startsWith('/chat/messages/')) {
-      const { content } = JSON.parse(event.body);
-      const channelId = path.split('/').pop();
-      await db`INSERT INTO messages (channel_id, user_id, content) VALUES (${channelId}, ${currentUser.id}, ${content})`;
-      return jsonResponse(200, { success: true });
-    }
-
-    if (method === 'POST' && path.includes('/chat/tickets')) {
-      const id = 'ticket-' + Math.random().toString(36).substring(2, 9);
-      const [ticket] = await db`INSERT INTO channels (id, name, type, user_id) VALUES (${id}, ${'Support: ' + currentUser.nickname}, 'ticket', ${currentUser.id}) RETURNING *`;
-      return jsonResponse(200, ticket);
-    }
-
-    // Admin
-    if (currentUser.role === 'admin') {
-      if (method === 'GET' && path.includes('/admin/users')) {
-        const users = await db`SELECT id, email, role, nickname, is_approved as "isApproved", created_at FROM users ORDER BY created_at DESC`;
-        return jsonResponse(200, users);
+    if (path.startsWith('/chat/messages/')) {
+      const chId = path.split('/').pop();
+      if (method === 'GET') {
+        const msgs = await db`SELECT m.*, u.nickname, u.role FROM messages m JOIN users u ON m.user_id = u.id WHERE m.channel_id = ${chId} ORDER BY m.created_at ASC LIMIT 50`;
+        return jsonResponse(200, msgs);
       }
-      if (method === 'POST' && path.startsWith('/admin/users/approve/')) {
-        const id = path.split('/').pop();
-        await db`UPDATE users SET is_approved = NOT is_approved WHERE id = ${id}`;
+      if (method === 'POST') {
+        const { content } = JSON.parse(event.body);
+        await db`INSERT INTO messages (channel_id, user_id, content) VALUES (${chId}, ${currentUser.id}, ${content})`;
         return jsonResponse(200, { success: true });
       }
+    }
 
+    // Admin Panel (Puni pristup)
+    if (currentUser.role === 'admin') {
+      if (path.includes('/admin/users')) {
+        if (method === 'GET') return jsonResponse(200, await db`SELECT id, email, nickname, role, is_approved as "isApproved" FROM users ORDER BY created_at DESC`);
+        if (path.includes('/approve/')) {
+          const uId = path.split('/').pop();
+          await db`UPDATE users SET is_approved = NOT is_approved WHERE id = ${uId}`;
+          return jsonResponse(200, { success: true });
+        }
+      }
+
+      // Generički CRUD za sadržaj
+      const segments = path.split('/');
+      const tableKey = segments[2];
       const tableMap = { lessons: 'lessons', suppliers: 'suppliers', announcements: 'announcements', useful: 'useful_items' };
-      const table = tableMap[path.split('/')[2]];
+      const table = tableMap[tableKey];
+
       if (table) {
-        if (method === 'GET') return jsonResponse(200, await db`SELECT * FROM ${db(table)} ORDER BY created_at DESC`);
+        if (method === 'GET') return jsonResponse(200, await db`SELECT * FROM ${db(table)}`);
         if (method === 'POST') {
           const body = JSON.parse(event.body);
           if (!body.id) body.id = Math.random().toString(36).substring(2, 9);
@@ -235,14 +200,15 @@ exports.handler = async (event, context) => {
           return jsonResponse(200, { success: true });
         }
         if (method === 'PUT') {
-          const id = path.split('/').pop();
+          const id = segments[3];
           const body = JSON.parse(event.body);
           delete body.id;
           await db`UPDATE ${db(table)} SET ${db(body)} WHERE id = ${id}`;
           return jsonResponse(200, { success: true });
         }
         if (method === 'DELETE') {
-          await db`DELETE FROM ${db(table)} WHERE id = ${path.split('/').pop()}`;
+          const id = segments[3];
+          await db`DELETE FROM ${db(table)} WHERE id = ${id}`;
           return jsonResponse(200, { success: true });
         }
       }
@@ -250,7 +216,6 @@ exports.handler = async (event, context) => {
 
     return jsonResponse(404, { message: 'Not Found' });
   } catch (err) {
-    console.error("API Error:", err);
-    return jsonResponse(500, { message: 'Server Error', error: err.message });
+    return jsonResponse(500, { message: err.message });
   }
 };
