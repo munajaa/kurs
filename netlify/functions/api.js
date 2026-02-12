@@ -3,7 +3,7 @@ const postgres = require('postgres');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = 'flipzone_balkan_secret_2026_secure_key';
+const JWT_SECRET = 'flipzone_ultra_secret_2026';
 const DB_URL = 'postgresql://neondb_owner:npg_9KFgPWvHqJO8@ep-fragrant-mud-aecb46z9-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require';
 
 const jsonResponse = (statusCode, body) => ({
@@ -30,9 +30,9 @@ const getSql = () => {
   return sql;
 };
 
+// Automatska sinkronizacija tablica
 const syncDatabase = async (db) => {
   try {
-    // Tablice Korisnika i Sadržaja
     await db`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -84,7 +84,6 @@ const syncDatabase = async (db) => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
-    // Chat Tablice
     await db`CREATE TABLE IF NOT EXISTS channels (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -100,11 +99,12 @@ const syncDatabase = async (db) => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )`;
 
-    const chCount = await db`SELECT count(*) FROM channels`;
-    if (parseInt(chCount[0].count) === 0) {
-      await db`INSERT INTO channels (id, name, type) VALUES ('opcenito', '👋 Opcenito', 'public'), ('trgovina', '💰 Trgovina', 'public')`;
+    // Inicijalni kanali
+    const chs = await db`SELECT count(*) FROM channels`;
+    if (parseInt(chs[0].count) === 0) {
+      await db`INSERT INTO channels (id, name, type) VALUES ('general', '👋 Opcenito', 'public'), ('trgovina', '💰 Trgovina', 'public')`;
     }
-  } catch (err) { console.error("DB Sync Error:", err); }
+  } catch (err) { console.error("Sync error", err); }
 };
 
 exports.handler = async (event, context) => {
@@ -127,23 +127,22 @@ exports.handler = async (event, context) => {
     // --- JAVNE RUTE ---
     if (method === 'POST' && path.includes('/auth/register')) {
       const { email, password, nickname } = JSON.parse(event.body);
-      const exists = await db`SELECT id FROM users WHERE email = ${email.toLowerCase()}`;
-      if (exists.length > 0) return jsonResponse(400, { message: 'Email već postoji.' });
+      const mail = email.toLowerCase().trim();
       const hashed = await bcrypt.hash(password, 10);
-      const isAdmin = email.toLowerCase() === 'romano.polovic33@gmail.com';
-      const [user] = await db`INSERT INTO users (email, password, nickname, role, is_approved) VALUES (${email.toLowerCase()}, ${hashed}, ${nickname}, ${isAdmin ? 'admin' : 'user'}, ${isAdmin}) RETURNING id, email, nickname, role, is_approved as "isApproved"`;
+      const isAdmin = mail === 'romano.polovic33@gmail.com';
+      const [user] = await db`INSERT INTO users (email, password, nickname, role, is_approved) VALUES (${mail}, ${hashed}, ${nickname}, ${isAdmin ? 'admin' : 'user'}, ${isAdmin}) RETURNING id, email, nickname, role, is_approved as "isApproved"`;
       return jsonResponse(200, { user, token: jwt.sign(user, JWT_SECRET) });
     }
 
     if (method === 'POST' && path.includes('/auth/login')) {
       const { email, password } = JSON.parse(event.body);
-      const [user] = await db`SELECT * FROM users WHERE email = ${email.toLowerCase()}`;
+      const [user] = await db`SELECT * FROM users WHERE email = ${email.toLowerCase().trim()}`;
       if (user && await bcrypt.compare(password, user.password)) {
         const { password: _, is_approved, ...safe } = user;
         safe.isApproved = is_approved;
         return jsonResponse(200, { user: safe, token: jwt.sign(safe, JWT_SECRET) });
       }
-      return jsonResponse(401, { message: 'Krivi podaci.' });
+      return jsonResponse(401, { message: 'Neispravni podaci.' });
     }
 
     if (method === 'GET' && path === '/data') {
@@ -155,17 +154,19 @@ exports.handler = async (event, context) => {
     }
 
     // --- ZAŠTIĆENE RUTE ---
-    if (!currentUser) return jsonResponse(401, { message: 'Nema tokena.' });
+    if (!currentUser) return jsonResponse(401, { message: 'Niste prijavljeni.' });
 
-    // Chat
-    if (path.startsWith('/chat/channels')) {
-      return jsonResponse(200, await db`SELECT * FROM channels ORDER BY type ASC`);
+    if (method === 'GET' && path.includes('/auth/me')) {
+      const [user] = await db`SELECT id, email, role, nickname, is_approved as "isApproved", completed_lessons FROM users WHERE id = ${currentUser.id}`;
+      return jsonResponse(200, user);
     }
+
+    // Chat Logic
+    if (path.startsWith('/chat/channels')) return jsonResponse(200, await db`SELECT * FROM channels`);
     if (path.startsWith('/chat/messages/')) {
       const chId = path.split('/').pop();
       if (method === 'GET') {
-        const msgs = await db`SELECT m.*, u.nickname, u.role FROM messages m JOIN users u ON m.user_id = u.id WHERE m.channel_id = ${chId} ORDER BY m.created_at ASC LIMIT 50`;
-        return jsonResponse(200, msgs);
+        return jsonResponse(200, await db`SELECT m.*, u.nickname, u.role FROM messages m JOIN users u ON m.user_id = u.id WHERE m.channel_id = ${chId} ORDER BY m.created_at ASC LIMIT 100`);
       }
       if (method === 'POST') {
         const { content } = JSON.parse(event.body);
@@ -174,7 +175,7 @@ exports.handler = async (event, context) => {
       }
     }
 
-    // Admin Panel (Puni pristup)
+    // --- ADMIN RUTE ---
     if (currentUser.role === 'admin') {
       if (path.includes('/admin/users')) {
         if (method === 'GET') return jsonResponse(200, await db`SELECT id, email, nickname, role, is_approved as "isApproved" FROM users ORDER BY created_at DESC`);
@@ -185,14 +186,11 @@ exports.handler = async (event, context) => {
         }
       }
 
-      // Generički CRUD za sadržaj
-      const segments = path.split('/');
-      const tableKey = segments[2];
+      const tableKey = path.split('/')[2];
       const tableMap = { lessons: 'lessons', suppliers: 'suppliers', announcements: 'announcements', useful: 'useful_items' };
       const table = tableMap[tableKey];
 
       if (table) {
-        if (method === 'GET') return jsonResponse(200, await db`SELECT * FROM ${db(table)}`);
         if (method === 'POST') {
           const body = JSON.parse(event.body);
           if (!body.id) body.id = Math.random().toString(36).substring(2, 9);
@@ -200,21 +198,21 @@ exports.handler = async (event, context) => {
           return jsonResponse(200, { success: true });
         }
         if (method === 'PUT') {
-          const id = segments[3];
+          const id = path.split('/').pop();
           const body = JSON.parse(event.body);
           delete body.id;
           await db`UPDATE ${db(table)} SET ${db(body)} WHERE id = ${id}`;
           return jsonResponse(200, { success: true });
         }
         if (method === 'DELETE') {
-          const id = segments[3];
+          const id = path.split('/').pop();
           await db`DELETE FROM ${db(table)} WHERE id = ${id}`;
           return jsonResponse(200, { success: true });
         }
       }
     }
 
-    return jsonResponse(404, { message: 'Not Found' });
+    return jsonResponse(404, { message: 'Not found' });
   } catch (err) {
     return jsonResponse(500, { message: err.message });
   }
