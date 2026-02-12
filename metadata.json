@@ -1,6 +1,7 @@
+
 {
   "name": "FlipZone Balkan Learning Hub",
-  "description": "Premium video lekcije za FlipZone Balkan zajednicu sa progresivnim praćenjem i modernim dizajnom.",
+  "description": "Premium video lekcije sa Live Chat podrškom i Admin Dashboardom.",
   "requestFramePermissions": [
     "camera",
     "microphone"
