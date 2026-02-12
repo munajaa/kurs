@@ -29,7 +29,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const endpoint = isRegister ? '/.netlify/functions/api/auth/register' : '/.netlify/functions/api/auth/login';
+      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,7 +37,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       });
 
       const contentType = res.headers.get("content-type");
-      if (contentType && contentType.indexOf("application/json") !== -1) {
+      if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || 'Neuspješna operacija');
         onLogin(data.user, data.token);

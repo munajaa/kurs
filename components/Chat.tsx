@@ -16,17 +16,17 @@ export const Chat: React.FC<ChatProps> = ({ user, token, onAuthRedirect }) => {
 
   const fetchMessages = async () => {
     try {
-      const res = await fetch('/.netlify/functions/api/messages');
+      const res = await fetch('/api/messages');
       if (res.ok) {
         const data = await res.json();
-        setMessages(data);
+        if (Array.isArray(data)) setMessages(data);
       }
     } catch (e) { console.error(e); }
   };
 
   useEffect(() => {
     fetchMessages();
-    const interval = setInterval(fetchMessages, 3000); // Poll every 3 seconds
+    const interval = setInterval(fetchMessages, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -42,7 +42,7 @@ export const Chat: React.FC<ChatProps> = ({ user, token, onAuthRedirect }) => {
     
     setLoading(true);
     try {
-      const res = await fetch('/.netlify/functions/api/messages', {
+      const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

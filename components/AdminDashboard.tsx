@@ -14,10 +14,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/.netlify/functions/api/admin/${activeTab}`, {
+      const res = await fetch(`/api/admin/${activeTab}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json)) setData(json);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -29,7 +32,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
   const handleDelete = async (id: any) => {
     if (!confirm('Sigurno želiš obrisati?')) return;
     try {
-      const res = await fetch(`/.netlify/functions/api/admin/${activeTab}/${id}`, {
+      const res = await fetch(`/api/admin/${activeTab}/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -42,7 +45,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onUpdate 
 
   const toggleApproval = async (id: number) => {
     try {
-      const res = await fetch(`/.netlify/functions/api/admin/users/approve/${id}`, {
+      const res = await fetch(`/api/admin/users/approve/${id}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
